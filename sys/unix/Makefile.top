@@ -1,5 +1,5 @@
 #      NetHack Top-level Makefile.
-# NetHack 3.6  Makefile.top    $NHDT-Date: 1575932543 2019/12/09 23:02:23 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.44 $
+# NetHack 3.6  Makefile.top    $NHDT-Date: 1589911654 2020/05/19 18:07:34 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.49 $
 # Copyright (c) 2015 by Kenneth Lorber, Kensington, Maryland
 # NetHack may be freely redistributed.  See license for details.
 
@@ -86,7 +86,7 @@ DATHELP = help hh cmdhelp keyhelp history opthelp wizhelp
 SPEC_LEVS = asmodeus.lua baalz.lua bigrm-*.lua castle.lua fakewiz?.lua \
 	juiblex.lua knox.lua medusa-?.lua minend-?.lua minefill.lua \
 	minetn-?.lua oracle.lua orcus.lua sanctum.lua soko?-?.lua \
-	tower?.lua valley.lua wizard?.lua nhlib.lua \
+	tower?.lua valley.lua wizard?.lua nhlib.lua themerms.lua \
 	astral.lua air.lua earth.lua fire.lua water.lua
 QUEST_LEVS = ???-goal.lua ???-fil?.lua ???-loca.lua ???-strt.lua
 
@@ -105,7 +105,8 @@ $(GAME): lua_support
 lua_support: lib/lua/liblua.a include/nhlua.h
 	@true
 lib/lua-$(LUA_VERSION)/src/liblua.a: lib/lua-$(LUA_VERSION)/src/lua.h
-	( cd lib/lua-$(LUA_VERSION)/src ; make a ; cd ../../.. )
+	( cd lib/lua-$(LUA_VERSION)/src \
+	  && make SYSCFLAGS='$(SYSCFLAGS)' a && cd ../../.. )
 lib/lua/liblua.a: lib/lua-$(LUA_VERSION)/src/liblua.a
 	@( if [ ! -d lib/lua ] ; then mkdir -p lib/lua ; fi )
 	cp lib/lua-$(LUA_VERSION)/src/liblua.a $@

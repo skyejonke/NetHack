@@ -98,7 +98,7 @@ static XtSignalId X11_sig_id;
 /* Interface definition, for windows.c */
 struct window_procs X11_procs = {
     "X11",
-    ( WC_COLOR | WC_HILITE_PET | WC_ASCII_MAP | WC_TILED_MAP
+    ( WC_COLOR | WC_INVERSE | WC_HILITE_PET | WC_ASCII_MAP | WC_TILED_MAP
      | WC_PLAYER_SELECTION | WC_PERM_INVENT | WC_MOUSE_SUPPORT ),
     /* status requires VIA_WINDOWPORT(); WC2_FLUSH_STATUS ensures that */
     ( WC2_FLUSH_STATUS
@@ -2609,19 +2609,6 @@ int dir;
     if (dir != WININIT)
         return;
 
-#ifdef OPENWINBUG
-    /* With the OpenWindows 3.0 libraries and the SunOS 4.1.2 ld, these
-     * two routines will not be found when linking.  An apparently correct
-     * executable is produced, along with nasty messages and a failure code
-     * returned to make.  The routines are in the static libXmu.a and
-     * libXmu.sa.4.0, but not in libXmu.so.4.0.  Rather than fiddle with
-     * static linking, we do this.
-     */
-    if (rn2(2) > 2) { /* i.e., FALSE that an optimizer probably can't find */
-        get_wmShellWidgetClass();
-        get_applicationShellWidgetClass();
-    }
-#endif
     return;
 }
 

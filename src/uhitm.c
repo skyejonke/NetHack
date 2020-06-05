@@ -1,4 +1,4 @@
-/* NetHack 3.6	uhitm.c	$NHDT-Date: 1584405117 2020/03/17 00:31:57 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.228 $ */
+/* NetHack 3.6	uhitm.c	$NHDT-Date: 1591017421 2020/06/01 13:17:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.236 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -336,7 +336,7 @@ register struct monst *mtmp;
      * you'll usually just swap places if this is a movement command
      */
     /* Intelligent chaotic weapons (Stormbringer) want blood */
-    if (is_safepet(mtmp) && !g.context.forcefight) {
+    if (is_safemon(mtmp) && !g.context.forcefight) {
         if (!uwep || uwep->oartifact != ART_STORMBRINGER) {
             /* There are some additional considerations: this won't work
              * if in a shop or Punished or you miss a random roll or
@@ -368,8 +368,8 @@ register struct monst *mtmp;
                 You("stop.  %s is in the way!", buf);
                 end_running(TRUE);
                 return TRUE;
-            } else if ((mtmp->mfrozen || (!mtmp->mcanmove)
-                        || (mtmp->data->mmove == 0)) && rn2(6)) {
+            } else if (mtmp->mfrozen || mtmp->msleeping || (!mtmp->mcanmove)
+                       || (mtmp->data->mmove == 0 && rn2(6))) {
                 pline("%s doesn't seem to move!", Monnam(mtmp));
                 end_running(TRUE);
                 return TRUE;
@@ -808,6 +808,9 @@ int dieroll;
 
                 if (obj->oartifact
                     && artifact_hit(&g.youmonst, mon, obj, &tmp, dieroll)) {
+                    /* artifact_hit updates 'tmp' but doesn't inflict any
+                       damage; however, it might cause carried items to be
+                       destroyed and they might do so */
                     if (DEADMONSTER(mon)) /* artifact killed monster */
                         return FALSE;
                     if (tmp == 0)
@@ -1149,7 +1152,7 @@ int dieroll;
         if (jousting < 0) {
             pline("%s shatters on impact!", Yname2(obj));
             /* (must be either primary or secondary weapon to get here) */
-            u.twoweap = FALSE; /* untwoweapon() is too verbose here */
+            set_twoweap(FALSE); /* u.twoweap = FALSE; untwoweapon() is too verbose */
             if (obj == uwep)
                 uwepgone(); /* set g.unweapon */
             /* minor side-effect: broken lance won't split puddings */
@@ -1519,7 +1522,7 @@ steal_it(mdef, mattk)
 struct monst *mdef;
 struct attack *mattk;
 {
-    struct obj *otmp, *gold = 0, *stealoid, **minvent_ptr;
+    struct obj *otmp, *gold = 0, *ustealo, **minvent_ptr;
     long unwornmask;
 
     otmp = mdef->minvent;
@@ -1527,28 +1530,35 @@ struct attack *mattk;
         return; /* nothing to take */
 
     /* look for worn body armor */
-    stealoid = (struct obj *) 0;
+    ustealo = (struct obj *) 0;
     if (could_seduce(&g.youmonst, mdef, mattk)) {
         /* find armor, and move it to end of inventory in the process */
         minvent_ptr = &mdef->minvent;
         while ((otmp = *minvent_ptr) != 0)
             if (otmp->owornmask & W_ARM) {
-                if (stealoid)
+                if (ustealo)
                     panic("steal_it: multiple worn suits");
                 *minvent_ptr = otmp->nobj; /* take armor out of minvent */
-                stealoid = otmp;
-                stealoid->nobj = (struct obj *) 0;
+                ustealo = otmp;
+                ustealo->nobj = (struct obj *) 0;
             } else {
                 minvent_ptr = &otmp->nobj;
             }
-        *minvent_ptr = stealoid; /* put armor back into minvent */
+        *minvent_ptr = ustealo; /* put armor back into minvent */
     }
     gold = findgold(mdef->minvent);
 
-    if (stealoid) { /* we will be taking everything */
-        if (gender(mdef) == (int) u.mfemale && g.youmonst.data->mlet == S_NYMPH)
-            You("charm %s.  She gladly hands over %sher possessions.",
-                mon_nam(mdef), !gold ? "" : "most of ");
+    if (ustealo) { /* we will be taking everything */
+        char heshe[20];
+
+        /* 3.7: this uses hero's base gender rather than nymph feminimity
+           but was using hardcoded pronouns She/her for target monster;
+           switch to dynamic pronoun */
+        if (gender(mdef) == (int) u.mfemale
+            && g.youmonst.data->mlet == S_NYMPH)
+            You("charm %s.  %s gladly hands over %s%s possessions.",
+                mon_nam(mdef), upstart(strcpy(heshe, mhe(mdef))),
+                !gold ? "" : "most of ", mhis(mdef));
         else
             You("seduce %s and %s starts to take off %s clothes.",
                 mon_nam(mdef), mhe(mdef), mhis(mdef));
@@ -1580,7 +1590,7 @@ struct attack *mattk;
                move instead of waiting until it picks something up */
             mdef->misc_worn_check |= I_SPECIAL;
 
-            if (otmp == stealoid) /* special message for final item */
+            if (otmp == ustealo) /* special message for final item */
                 pline("%s finishes taking off %s suit.", Monnam(mdef),
                       mhis(mdef));
         }
@@ -1601,7 +1611,7 @@ struct attack *mattk;
                 break; /* can't continue stealing */
         }
 
-        if (!stealoid)
+        if (!ustealo)
             break; /* only taking one item */
 
         /* take gold out of minvent before making next selection; if it
@@ -2000,6 +2010,10 @@ int specialdmg; /* blessed and/or silver bonus against various things */
                 pline("%s looks confused.", Monnam(mdef));
             mdef->mconf = 1;
         }
+        break;
+    case AD_POLY:
+        if (!negated && tmp < mdef->mhp)
+            tmp = mon_poly(&g.youmonst, mdef, tmp);
         break;
     default:
         tmp = 0;
@@ -3096,14 +3110,21 @@ struct monst *mon;
     u.umconf--;
 }
 
+/* returns 1 if light flash has noticeable effect on 'mtmp', 0 otherwise */
 int
 flash_hits_mon(mtmp, otmp)
 struct monst *mtmp;
 struct obj *otmp; /* source of flash */
 {
-    int tmp, amt, res = 0, useeit = canseemon(mtmp);
+    struct rm *lev;
+    int tmp, amt, useeit, res = 0;
 
-    if (mtmp->msleeping) {
+    if (g.notonhead)
+        return 0;
+    lev = &levl[mtmp->mx][mtmp->my];
+    useeit = canseemon(mtmp);
+
+    if (mtmp->msleeping && haseyes(mtmp->data)) {
         mtmp->msleeping = 0;
         if (useeit) {
             pline_The("flash awakens %s.", mon_nam(mtmp));
@@ -3130,7 +3151,18 @@ struct obj *otmp; /* source of flash */
                 mtmp->mcansee = 0;
                 mtmp->mblinded = (tmp < 3) ? 0 : rnd(1 + 50 / tmp);
             }
+        } else if (flags.verbose && useeit) {
+            if (lev->lit)
+                pline("The flash of light shines on %s.", mon_nam(mtmp));
+            else
+                pline("%s is illuminated.", Monnam(mtmp));
+            res = 2; /* 'message has been given' temporary value */
         }
+    }
+    if (res) {
+        if (!lev->lit)
+            display_nhwindow(WIN_MESSAGE, TRUE);
+        res &= 1; /* change temporary 2 back to 0 */
     }
     return res;
 }

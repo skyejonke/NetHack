@@ -1,4 +1,4 @@
-/* NetHack 3.6	makemon.c	$NHDT-Date: 1585361050 2020/03/28 02:04:10 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.162 $ */
+/* NetHack 3.6	makemon.c	$NHDT-Date: 1591178397 2020/06/03 09:59:57 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.173 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -16,14 +16,13 @@
 
 static boolean FDECL(uncommon, (int));
 static int FDECL(align_shift, (struct permonst *));
-static boolean FDECL(mk_gen_ok, (int, int, int));
+static boolean FDECL(mk_gen_ok, (int, unsigned, unsigned));
 static boolean FDECL(wrong_elem_type, (struct permonst *));
 static void FDECL(m_initgrp, (struct monst *, int, int, int, int));
 static void FDECL(m_initthrow, (struct monst *, int, int));
 static void FDECL(m_initweap, (struct monst *));
 static void FDECL(m_initinv, (struct monst *));
-static boolean FDECL(makemon_rnd_goodpos, (struct monst *,
-                                               unsigned, coord *));
+static boolean FDECL(makemon_rnd_goodpos, (struct monst *, long, coord *));
 
 #define m_initsgrp(mtmp, x, y, mmf) m_initgrp(mtmp, x, y, 3, mmf)
 #define m_initlgrp(mtmp, x, y, mmf) m_initgrp(mtmp, x, y, 10, mmf)
@@ -616,35 +615,52 @@ register struct monst *mtmp;
                 break;
             }
 
+#define add_ac(otmp) \
+    if (otmp) { mac += ARM_BONUS(otmp); } \
+    otmp = (struct obj *) 0;
+
+            /* round 1: give them body armor */
             if (mac < -1 && rn2(5))
-                mac += 7 + mongets(mtmp, (rn2(5)) ? PLATE_MAIL
-                                                  : CRYSTAL_PLATE_MAIL);
+                otmp = mongets(mtmp, (rn2(5)) ? PLATE_MAIL
+                                              : CRYSTAL_PLATE_MAIL);
             else if (mac < 3 && rn2(5))
-                mac +=
-                    6 + mongets(mtmp, (rn2(3)) ? SPLINT_MAIL : BANDED_MAIL);
+                otmp = mongets(mtmp, (rn2(3)) ? SPLINT_MAIL : BANDED_MAIL);
             else if (rn2(5))
-                mac += 3 + mongets(mtmp, (rn2(3)) ? RING_MAIL
-                                                  : STUDDED_LEATHER_ARMOR);
+                otmp = mongets(mtmp, (rn2(3)) ? RING_MAIL
+                                              : STUDDED_LEATHER_ARMOR);
             else
-                mac += 2 + mongets(mtmp, LEATHER_ARMOR);
+                otmp = mongets(mtmp, LEATHER_ARMOR);
+            add_ac(otmp);
 
+            /* round 2: helmets */
             if (mac < 10 && rn2(3))
-                mac += 1 + mongets(mtmp, HELMET);
+                otmp = mongets(mtmp, HELMET);
             else if (mac < 10 && rn2(2))
-                mac += 1 + mongets(mtmp, DENTED_POT);
-            if (mac < 10 && rn2(3))
-                mac += 1 + mongets(mtmp, SMALL_SHIELD);
-            else if (mac < 10 && rn2(2))
-                mac += 2 + mongets(mtmp, LARGE_SHIELD);
-            if (mac < 10 && rn2(3))
-                mac += 1 + mongets(mtmp, LOW_BOOTS);
-            else if (mac < 10 && rn2(2))
-                mac += 2 + mongets(mtmp, HIGH_BOOTS);
-            if (mac < 10 && rn2(3))
-                mac += 1 + mongets(mtmp, LEATHER_GLOVES);
-            else if (mac < 10 && rn2(2))
-                mac += 1 + mongets(mtmp, LEATHER_CLOAK);
+                otmp = mongets(mtmp, DENTED_POT);
+            add_ac(otmp);
 
+            /* round 3: shields */
+            if (mac < 10 && rn2(3))
+                otmp = mongets(mtmp, SMALL_SHIELD);
+            else if (mac < 10 && rn2(2))
+                otmp = mongets(mtmp, LARGE_SHIELD);
+            add_ac(otmp);
+
+            /* round 4: boots */
+            if (mac < 10 && rn2(3))
+                otmp = mongets(mtmp, LOW_BOOTS);
+            else if (mac < 10 && rn2(2))
+                otmp = mongets(mtmp, HIGH_BOOTS);
+            add_ac(otmp);
+
+            /* round 5: gloves + cloak */
+            if (mac < 10 && rn2(3))
+                otmp = mongets(mtmp, LEATHER_GLOVES);
+            else if (mac < 10 && rn2(2))
+                otmp = mongets(mtmp, LEATHER_CLOAK);
+            add_ac(otmp); /* not technically needed */
+
+#undef add_ac
             nhUse(mac); /* suppress 'dead increment' from static analyzer */
 
             if (ptr == &mons[PM_WATCH_CAPTAIN]) {
@@ -1029,11 +1045,11 @@ newmextra()
 static boolean
 makemon_rnd_goodpos(mon, gpflags, cc)
 struct monst *mon;
-unsigned gpflags;
+long gpflags;
 coord *cc;
 {
     int tryct = 0;
-    int nx,ny;
+    int nx, ny;
     boolean good;
 
     do {
@@ -1102,16 +1118,17 @@ struct monst *
 makemon(ptr, x, y, mmflags)
 register struct permonst *ptr;
 register int x, y;
-int mmflags;
+long mmflags;
 {
     register struct monst *mtmp;
     struct monst fakemon;
     coord cc;
     int mndx, mcham, ct, mitem;
-    boolean anymon = (!ptr);
-    boolean byyou = (x == u.ux && y == u.uy);
-    boolean allow_minvent = ((mmflags & NO_MINVENT) == 0);
-    boolean countbirth = ((mmflags & MM_NOCOUNTBIRTH) == 0);
+    boolean anymon = !ptr,
+            byyou = (x == u.ux && y == u.uy),
+            allow_minvent = ((mmflags & NO_MINVENT) == 0),
+            countbirth = ((mmflags & MM_NOCOUNTBIRTH) == 0),
+            allowtail = ((mmflags & MM_NOTAIL) == 0);
     unsigned gpflags = (mmflags & MM_IGNOREWATER) ? MM_IGNOREWATER : 0;
 
     fakemon = cg.zeromonst;
@@ -1327,20 +1344,12 @@ int mmflags;
     if (is_dprince(ptr) && ptr->msound == MS_BRIBE) {
         mtmp->mpeaceful = mtmp->minvis = mtmp->perminvis = 1;
         mtmp->mavenge = 0;
-        if (uwep && uwep->oartifact == ART_EXCALIBUR)
+        if (uwep && (uwep->oartifact == ART_EXCALIBUR
+                     || uwep->oartifact == ART_DEMONBANE))
             mtmp->mpeaceful = mtmp->mtame = FALSE;
     }
-#ifndef DCC30_BUG
-    if (mndx == PM_LONG_WORM && (mtmp->wormno = get_wormno()) != 0)
-#else
-    /* DICE 3.0 doesn't like assigning and comparing mtmp->wormno in the
-       same expression. */
-    if (mndx == PM_LONG_WORM
-        && (mtmp->wormno = get_wormno(), mtmp->wormno != 0))
-#endif
-    {
-        /* we can now create worms with tails - 11/91 */
-        initworm(mtmp, rn2(5));
+    if (mndx == PM_LONG_WORM && (mtmp->wormno = get_wormno()) != 0) {
+        initworm(mtmp, allowtail ? rn2(5) : 0);
         if (count_wsegs(mtmp))
             place_worm_tail_randomly(mtmp, x, y);
     }
@@ -1416,7 +1425,7 @@ int mmflags;
 struct monst *
 unmakemon(mon, mmflags)
 struct monst *mon;
-int mmflags;
+long mmflags;
 {
     boolean countbirth = ((mmflags & MM_NOCOUNTBIRTH) == 0);
     int mndx = monsndx(mon->data);
@@ -1616,11 +1625,12 @@ rndmonst()
 /* decide whether it's ok to generate a candidate monster by mkclass() */
 static boolean
 mk_gen_ok(mndx, mvflagsmask, genomask)
-int mndx, mvflagsmask, genomask;
+int mndx;
+unsigned mvflagsmask, genomask;
 {
     struct permonst *ptr = &mons[mndx];
 
-    if ((g.mvitals[mndx].mvflags & mvflagsmask) && !(genomask & G_IGNORE))
+    if (g.mvitals[mndx].mvflags & mvflagsmask)
         return FALSE;
     if (ptr->geno & genomask)
         return FALSE;
@@ -1650,13 +1660,13 @@ int spc;
 struct permonst *
 mkclass_aligned(class, spc, atyp)
 char class;
-int spc;
+int spc; /* special mons[].geno handling */
 aligntyp atyp;
 {
     register int first, last, num = 0;
     int k, nums[SPECIAL_PM + 1]; /* +1: insurance for final return value */
-    int ignore = (spc & G_IGNORE);
-    int maxmlev, mask = (G_NOGEN | G_UNIQ) & ~spc;
+    int maxmlev, gehennom = Inhell != 0;
+    unsigned mv_mask, gn_mask;
 
     (void) memset((genericptr_t) nums, 0, sizeof nums);
     maxmlev = level_difficulty() >> 1;
@@ -1678,13 +1688,30 @@ aligntyp atyp;
         return (struct permonst *) 0;
     }
 
+    mv_mask = G_GONE; /* G_GENOD | G_EXTINCT */
+    if ((spc & G_IGNORE) != 0) {
+        mv_mask = 0; /* mv_mask &= ~G_GONE; */
+        /* G_IGNORE is not a mons[].geno mask so get rid of it now */
+        spc &= ~G_IGNORE;
+    }
+
     /*  Assumption #2:  monsters of a given class are presented in ascending
      *                  order of strength.
      */
     for (last = first; last < SPECIAL_PM && mons[last].mlet == class; last++) {
         if (atyp != A_NONE && sgn(mons[last].maligntyp) != sgn(atyp))
             continue;
-        if (mk_gen_ok(last, G_GONE, mask|ignore)) {
+        /* traditionally mkclass() ignored hell-only and never-in-hell;
+           now we usually honor those but not all the time, mostly so that
+           the majority of major demons aren't constrained to Gehennom;
+           arch- and master liches are always so constrained (for creation;
+           lesser liches might grow up into them elsewhere) */
+        gn_mask = (G_NOGEN | G_UNIQ);
+        if (rn2(9) || class == S_LICH)
+            gn_mask |= (gehennom ? G_NOHELL : G_HELL);
+        gn_mask &= ~spc;
+
+        if (mk_gen_ok(last, mv_mask, gn_mask)) {
             /* consider it; don't reject a toostrong() monster if we
                don't have anything yet (num==0) or if it is the same
                (or lower) difficulty as preceding candidate (non-zero
@@ -1730,6 +1757,7 @@ mkclass_poly(class)
 int class;
 {
     register int first, last, num = 0;
+    unsigned gmask;
 
     for (first = LOW_PM; first < SPECIAL_PM; first++)
         if (mons[first].mlet == class)
@@ -1737,14 +1765,20 @@ int class;
     if (first == SPECIAL_PM)
         return NON_PM;
 
+    gmask = (G_NOGEN | G_UNIQ);
+    /* mkclass() does this on a per monster type basis, but doing that here
+       would make the two loops inconsistent with each other for non L */
+    if (rn2(9) || class == S_LICH)
+        gmask |= (Inhell ? G_NOHELL : G_HELL);
+
     for (last = first; last < SPECIAL_PM && mons[last].mlet == class; last++)
-        if (mk_gen_ok(last, G_GENOD, (G_NOGEN | G_UNIQ)))
+        if (mk_gen_ok(last, G_GENOD, gmask))
             num += mons[last].geno & G_FREQ;
     if (!num)
         return NON_PM;
 
     for (num = rnd(num); num > 0; first++)
-        if (mk_gen_ok(first, G_GENOD, (G_NOGEN | G_UNIQ)))
+        if (mk_gen_ok(first, G_GENOD, gmask))
             num -= mons[first].geno & G_FREQ;
     first--; /* correct an off-by-one error */
 
@@ -1911,16 +1945,15 @@ struct monst *mtmp, *victim;
     return ptr;
 }
 
-int
+struct obj *
 mongets(mtmp, otyp)
 register struct monst *mtmp;
 int otyp;
 {
     register struct obj *otmp;
-    int spe;
 
     if (!otyp)
-        return 0;
+        return (struct obj *) 0;
     otmp = mksobj(otyp, TRUE, FALSE);
     if (otmp) {
         if (mtmp->data->mlet == S_DEMON) {
@@ -1957,11 +1990,12 @@ int otyp;
                 otmp->spe = 0;
         }
 
-        spe = otmp->spe;
-        (void) mpickobj(mtmp, otmp); /* might free otmp */
-        return spe;
+        if (mpickobj(mtmp, otmp)) {
+            /* otmp was freed via merging with something else */
+            otmp = (struct obj *) 0;
+        }
     }
-    return 0;
+    return otmp;
 }
 
 int
@@ -2121,7 +2155,7 @@ struct monst *mtmp;
 }
 
 static const NEARDATA char syms[] = {
-    MAXOCLASSES,  MAXOCLASSES + 1, RING_CLASS,   WAND_CLASS,   WEAPON_CLASS,
+    MAXOCLASSES,  MAXOCLASSES,     RING_CLASS,   WAND_CLASS,   WEAPON_CLASS,
     FOOD_CLASS,   COIN_CLASS,      SCROLL_CLASS, POTION_CLASS, ARMOR_CLASS,
     AMULET_CLASS, TOOL_CLASS,      ROCK_CLASS,   GEM_CLASS,    SPBOOK_CLASS,
     S_MIMIC_DEF,  S_MIMIC_DEF,
@@ -2175,7 +2209,9 @@ register struct monst *mtmp;
             appear = Is_rogue_level(&u.uz) ? S_hwall : S_hcdoor;
         else
             appear = Is_rogue_level(&u.uz) ? S_vwall : S_vcdoor;
-    } else if (g.level.flags.is_maze_lev && !In_sokoban(&u.uz) && rn2(2)) {
+    } else if (g.level.flags.is_maze_lev
+               && !(In_mines(&u.uz) && in_town(u.ux, u.uy))
+               && !In_sokoban(&u.uz) && rn2(2)) {
         ap_type = M_AP_OBJECT;
         appear = STATUE;
     } else if (roomno < 0 && !t_at(mx, my)) {
@@ -2206,17 +2242,28 @@ register struct monst *mtmp;
         if (s_sym < 0) {
             ap_type = M_AP_OBJECT;
             appear = -s_sym;
+        } else if (rt == FODDERSHOP && s_sym > MAXOCLASSES) {
+            /* health food store usually generates pseudo-class
+               VEGETARIAN_CLASS which is MAXOCLASSES+1; we don't bother
+               trying to select among all possible vegetarian food items */
+            ap_type = M_AP_OBJECT;
+            appear = rn2(2) ? LUMP_OF_ROYAL_JELLY : SLIME_MOLD;
         } else {
-            if (s_sym == RANDOM_CLASS)
-                s_sym = syms[rn2((int) sizeof(syms) - 2) + 2];
+            if (s_sym == RANDOM_CLASS || s_sym >= MAXOCLASSES)
+                s_sym = syms[rn2(SIZE(syms) - 2) + 2];
             goto assign_sym;
         }
     } else {
-        s_sym = syms[rn2((int) sizeof(syms))];
+        s_sym = syms[rn2(SIZE(syms))];
  assign_sym:
-        if (s_sym == MAXOCLASSES || s_sym == MAXOCLASSES + 1) {
+        if (s_sym == MAXOCLASSES) {
+            static const int furnsyms[] = {
+                S_upstair, S_upstair, S_dnstair, S_dnstair,
+                S_altar, S_grave, S_throne, S_sink
+            };
+
             ap_type = M_AP_FURNITURE;
-            appear = (s_sym == MAXOCLASSES) ? S_upstair : S_dnstair;
+            appear = furnsyms[rn2(SIZE(furnsyms))];
         } else {
             ap_type = M_AP_OBJECT;
             if (s_sym == S_MIMIC_DEF) {

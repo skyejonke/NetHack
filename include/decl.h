@@ -1,4 +1,4 @@
-/* NetHack 3.6  decl.h  $NHDT-Date: 1583608809 2020/03/07 19:20:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.228 $ */
+/* NetHack 3.6  decl.h  $NHDT-Date: 1591017415 2020/06/01 13:16:55 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.237 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2007. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -323,9 +323,6 @@ E struct tc_gbl_data {   /* also declared in tcap.h */
 #define CO g.tc_gbl_data.tc_CO
 #endif
 
-/* xxxexplain[] is in drawing.c */
-E const char *const monexplain[], invisexplain[], *const oclass_names[];
-
 /* Some systems want to use full pathnames for some subsets of file names,
  * rather than assuming that they're all in the current directory.  This
  * provides all the subclasses that seem reasonable, and sets up for all
@@ -631,6 +628,17 @@ struct role_filter {
     short mask;
 };
 
+/* read.c, create_particular() & create_particular_parse() */
+struct _create_particular_data {
+    int quan;
+    int which;
+    int fem;
+    char monclass;
+    boolean randmonst;
+    boolean maketame, makepeaceful, makehostile;
+    boolean sleeping, saddled, invisible, hidden;
+};
+
 /* instance_globals holds engine state that does not need to be
  * persisted upon game exit.  The initialization state is well defined
  * an set in decl.c during early early engine initialization.
@@ -702,7 +710,7 @@ struct instance_globals {
     const char *hname; /* name of the game (argv[0] of main) */
     int hackpid; /* current process id */
     char chosen_windowtype[WINTYPELEN];
-    int bases[MAXOCLASSES];
+    int bases[MAXOCLASSES + 1];
     int multi;
     const char *multi_reason;
     int nroom;
@@ -727,6 +735,7 @@ struct instance_globals {
 #define DOMOVE_RUSH         0x00000002
     const char *nomovemsg;
     char plname[PL_NSIZ]; /* player name */
+    int plnamelen; /* length of plname[] if that came from getlogin() */
     char pl_character[PL_CSIZ];
     char pl_race; /* character's race */
     char pl_fruit[PL_FSIZ];
@@ -803,6 +812,10 @@ struct instance_globals {
 #endif
     struct sinfo program_state;
 
+    /* detect.c */
+
+    int already_found_flag; /* used to augment first "already found a monster"
+                             * message if 'cmdassist' is Off */
     /* dig.c */
 
     boolean did_dig_msg;
@@ -817,7 +830,8 @@ struct instance_globals {
     boolean at_ladder;
     char *dfr_pre_msg;  /* pline() before level change */
     char *dfr_post_msg; /* pline() after level change */
-    d_level save_dlevel;
+    int did_nothing_flag; /* to augment the no-rest-next-to-monster message */
+    d_level save_dlevel; /* ? [even back in 3.4.3, only used in bones.c] */
 
     /* do_name.c */
     struct selectionvar *gloc_filter_map;
@@ -933,6 +947,7 @@ struct instance_globals {
     int mhitu_dieroll;
 
     /* mklev.c */
+    genericptr_t luathemes[MAXDUNGEON];
     xchar vault_x;
     xchar vault_y;
     boolean made_branch; /* used only during level creation */
@@ -1120,10 +1135,16 @@ struct instance_globals {
     struct sp_coder *coder;
     xchar xstart, ystart;
     xchar xsize, ysize;
+    boolean in_mk_themerooms;
+    boolean themeroom_failed;
 
     /* spells.c */
     int spl_sortmode;   /* index into spl_sortchoices[] */
     int *spl_orderindx; /* array of g.spl_book[] indices */
+
+    /* steal.c */
+    unsigned int stealoid; /* object to be stolen */
+    unsigned int stealmid; /* monster doing the stealing */
 
     /* teleport.c */
     struct obj *telescroll; /* non-null when teleporting via this scroll */

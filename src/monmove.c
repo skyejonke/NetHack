@@ -1,4 +1,4 @@
-/* NetHack 3.6	monmove.c	$NHDT-Date: 1585361053 2020/03/28 02:04:13 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.133 $ */
+/* NetHack 3.6	monmove.c	$NHDT-Date: 1586091452 2020/04/05 12:57:32 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.137 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -503,8 +503,12 @@ register struct monst *mtmp;
 
     /* Monsters that want to acquire things */
     /* may teleport, so do it before inrange is set */
-    if (is_covetous(mdat))
+    if (is_covetous(mdat)) {
         (void) tactics(mtmp);
+        /* tactics -> mnexto -> deal_with_overcrowding */
+        if (mtmp->mstate)
+            return 0;
+    }
 
     /* check distance and scariness of attacks */
     distfleeck(mtmp, &inrange, &nearby, &scared);
@@ -622,6 +626,9 @@ register struct monst *mtmp;
 
     /*  Now the actual movement phase
      */
+
+    if (mtmp->data == &mons[PM_HEZROU]) /* stench */
+        create_gas_cloud(mtmp->mx, mtmp->my, 1, 8);
 
     if (mdat == &mons[PM_KILLER_BEE]
         /* could be smarter and deliberately move to royal jelly, but
@@ -835,7 +842,7 @@ m_move(mtmp, after)
 register struct monst *mtmp;
 register int after;
 {
-    register int appr;
+    int appr, etmp;
     xchar gx, gy, nix, niy, chcnt;
     int chi; /* could be schar except for stupid Sun-2 compiler */
     boolean likegold = 0, likegems = 0, likeobjs = 0, likemagic = 0,
@@ -992,6 +999,12 @@ register int after;
                     > ((ygold = findgold(g.invent)) ? ygold->quan : 0L))))
             appr = -1;
 
+        /* hostile monsters with ranged thrown weapons try to stay away */
+        if (!mtmp->mpeaceful
+            && (dist2(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy) < 5*5)
+            && m_canseeu(mtmp) && m_has_launcher_and_ammo(mtmp))
+            appr = -1;
+
         if (!should_see && can_track(ptr)) {
             register coord *cp;
 
@@ -1005,8 +1018,8 @@ register int after;
 
     if ((!mtmp->mpeaceful || !rn2(10)) && (!Is_rogue_level(&u.uz))) {
         boolean in_line = (lined_up(mtmp)
-               && (distmin(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy)
-                   <= (throws_rocks(g.youmonst.data) ? 20 : ACURRSTR / 2 + 1)));
+             && (distmin(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy)
+                 <= (throws_rocks(g.youmonst.data) ? 20 : ACURRSTR / 2 + 1)));
 
         if (appr != 1 || !in_line) {
             /* Monsters in combat won't pick stuff up, avoiding the
@@ -1527,8 +1540,14 @@ register int after;
 
             /* Maybe a cube ate just about anything */
             if (ptr == &mons[PM_GELATINOUS_CUBE]) {
-                if (meatobj(mtmp) == 2)
-                    return 2; /* it died */
+                if ((etmp = meatobj(mtmp)) >= 2)
+                    return etmp; /* it died or got forced off the level */
+            }
+            /* Maybe a purple worm ate a corpse */
+            if (ptr == &mons[PM_PURPLE_WORM]
+                || ptr == &mons[PM_BABY_PURPLE_WORM]) {
+                if ((etmp = meatcorpse(mtmp)) >= 2)
+                    return etmp; /* it died or got forced off the level */
             }
 
             if (!*in_rooms(mtmp->mx, mtmp->my, SHOPBASE) || !rn2(25)) {
@@ -1606,8 +1625,8 @@ void
 set_apparxy(mtmp)
 register struct monst *mtmp;
 {
-    boolean notseen, gotu;
-    register int disp, mx = mtmp->mux, my = mtmp->muy;
+    boolean notseen, notthere, gotu;
+    int disp, mx = mtmp->mux, my = mtmp->muy;
     long umoney = money_cnt(g.invent);
 
     /*
@@ -1624,24 +1643,25 @@ register struct monst *mtmp;
         goto found_you;
 
     notseen = (!mtmp->mcansee || (Invis && !perceives(mtmp->data)));
+    notthere = (Displaced && mtmp->data != &mons[PM_DISPLACER_BEAST]);
     /* add cases as required.  eg. Displacement ... */
-    if (notseen || Underwater) {
+    if (Underwater) {
+        disp = 1;
+    } else if (notseen) {
         /* Xorns can smell quantities of valuable metal
-            like that in solid gold coins, treat as seen */
-        if ((mtmp->data == &mons[PM_XORN]) && umoney && !Underwater)
-            disp = 0;
-        else
-            disp = 1;
-    } else if (Displaced) {
+           like that in solid gold coins, treat as seen */
+        disp = (mtmp->data == &mons[PM_XORN] && umoney) ? 0 : 1;
+    } else if (notthere) {
         disp = couldsee(mx, my) ? 2 : 1;
-    } else
+    } else {
         disp = 0;
+    }
     if (!disp)
         goto found_you;
 
     /* without something like the following, invisibility and displacement
        are too powerful */
-    gotu = notseen ? !rn2(3) : Displaced ? !rn2(4) : FALSE;
+    gotu = notseen ? !rn2(3) : notthere ? !rn2(4) : FALSE;
 
     if (!gotu) {
         register int try_cnt = 0;

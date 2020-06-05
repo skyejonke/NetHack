@@ -1,4 +1,4 @@
-/* NetHack 3.6	mkobj.c	$NHDT-Date: 1585361051 2020/03/28 02:04:11 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.176 $ */
+/* NetHack 3.6	mkobj.c	$NHDT-Date: 1591178399 2020/06/03 09:59:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.180 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -75,9 +75,8 @@ newoextra()
     oextra = (struct oextra *) alloc(sizeof (struct oextra));
     oextra->oname = 0;
     oextra->omonst = 0;
-    oextra->omid = 0;
-    oextra->olong = 0;
     oextra->omailcmd = 0;
+    oextra->omid = 0;
     return oextra;
 }
 
@@ -92,10 +91,6 @@ struct obj *o;
             free((genericptr_t) x->oname);
         if (x->omonst)
             free_omonst(o);     /* 'o' rather than 'x' */
-        if (x->omid)
-            free((genericptr_t) x->omid);
-        if (x->olong)
-            free((genericptr_t) x->olong);
         if (x->omailcmd)
             free((genericptr_t) x->omailcmd);
 
@@ -141,42 +136,14 @@ struct obj *otmp;
 {
     if (!otmp->oextra)
         otmp->oextra = newoextra();
-    if (!OMID(otmp)) {
-        OMID(otmp) = (unsigned *) alloc(sizeof (unsigned));
-        (void) memset((genericptr_t) OMID(otmp), 0, sizeof (unsigned));
-    }
+    OMID(otmp) = 0;
 }
 
 void
 free_omid(otmp)
 struct obj *otmp;
 {
-    if (otmp->oextra && OMID(otmp)) {
-        free((genericptr_t) OMID(otmp));
-        OMID(otmp) = (unsigned *) 0;
-    }
-}
-
-void
-newolong(otmp)
-struct obj *otmp;
-{
-    if (!otmp->oextra)
-        otmp->oextra = newoextra();
-    if (!OLONG(otmp)) {
-        OLONG(otmp) = (long *) alloc(sizeof (long));
-        (void) memset((genericptr_t) OLONG(otmp), 0, sizeof (long));
-    }
-}
-
-void
-free_olong(otmp)
-struct obj *otmp;
-{
-    if (otmp->oextra && OLONG(otmp)) {
-        free((genericptr_t) OLONG(otmp));
-        OLONG(otmp) = (long *) 0;
-    }
+    OMID(otmp) = 0;
 }
 
 void
@@ -406,20 +373,13 @@ struct obj *obj2, *obj1;
         if (OMONST(obj1)->mextra)
             copy_mextra(OMONST(obj2), OMONST(obj1));
     }
+    if (has_omailcmd(obj1)) {
+        new_omailcmd(obj2, OMAILCMD(obj1));
+    }
     if (has_omid(obj1)) {
         if (!OMID(obj2))
             newomid(obj2);
-        (void) memcpy((genericptr_t) OMID(obj2), (genericptr_t) OMID(obj1),
-                      sizeof (unsigned));
-    }
-    if (has_olong(obj1)) {
-        if (!OLONG(obj2))
-            newolong(obj2);
-        (void) memcpy((genericptr_t) OLONG(obj2), (genericptr_t) OLONG(obj1),
-                      sizeof (long));
-    }
-    if (has_omailcmd(obj1)) {
-        new_omailcmd(obj2, OMAILCMD(obj1));
+        OMID(obj2) = OMID(obj1);
     }
 }
 
@@ -941,16 +901,16 @@ boolean artif;
                 otmp->spe = rn1(70, 30);
                 break;
             case CAN_OF_GREASE:
-                otmp->spe = rnd(25);
+                otmp->spe = rn1(21, 5); /* 0..20 + 5 => 5..25 */
                 blessorcurse(otmp, 10);
                 break;
             case CRYSTAL_BALL:
-                otmp->spe = rnd(5);
+                otmp->spe = rn1(5, 3); /* 0..4 + 3 => 3..7 */
                 blessorcurse(otmp, 2);
                 break;
             case HORN_OF_PLENTY:
             case BAG_OF_TRICKS:
-                otmp->spe = rnd(20);
+                otmp->spe = rn1(18, 3); /* 0..17 + 3 => 3..20 */
                 break;
             case FIGURINE:
                 tryct = 0;
@@ -1188,6 +1148,11 @@ struct obj *body;
     long corpse_age; /* age of corpse          */
     int rot_adjust;
     short action;
+    boolean no_revival;
+
+    /* if a troll corpse was frozen, it won't get a revive timer */
+    no_revival = (body->norevive != 0);
+    body->norevive = 0; /* always clear corpse's 'frozen' flag */
 
     /* lizards and lichen don't rot or revive */
     if (body->corpsenm == PM_LIZARD || body->corpsenm == PM_LICHEN)
@@ -1212,8 +1177,9 @@ struct obj *body;
             if (!rn2(3))
                 break;
 
-    } else if (mons[body->corpsenm].mlet == S_TROLL && !body->norevive) {
+    } else if (mons[body->corpsenm].mlet == S_TROLL && !no_revival) {
         long age;
+
         for (age = 2; age <= TAINT_AGE; age++)
             if (!rn2(TROLL_REVIVE_CHANCE)) { /* troll revives */
                 action = REVIVE_MON;
@@ -1222,8 +1188,6 @@ struct obj *body;
             }
     }
 
-    if (body->norevive)
-        body->norevive = 0;
     (void) start_timer(when, TIMER_OBJECT, action, obj_to_any(body));
 }
 
@@ -1605,7 +1569,7 @@ unsigned mid;
     if (!mid || !obj)
         return (struct obj *) 0;
     newomid(obj);
-    *OMID(obj) = mid;
+    OMID(obj) = mid;
     return obj;
 }
 
@@ -1633,6 +1597,9 @@ struct monst *mtmp;
         mtmp2->minvent = (struct obj *) 0;
         if (mtmp->mextra)
             copy_mextra(mtmp2, mtmp);
+        /* if mtmp is a long worm with segments, its saved traits will
+           be one without any segments */
+        mtmp2->wormno = 0;
     }
     return obj;
 }

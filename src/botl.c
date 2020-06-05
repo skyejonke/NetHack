@@ -1,4 +1,4 @@
-/* NetHack 3.6	botl.c	$NHDT-Date: 1584350350 2020/03/16 09:19:10 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.186 $ */
+/* NetHack 3.6	botl.c	$NHDT-Date: 1585647484 2020/03/31 09:38:04 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.187 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -16,6 +16,12 @@ const char *const enc_stat[] = { "",         "Burdened",  "Stressed",
 static const char *NDECL(rank);
 static void NDECL(bot_via_windowport);
 static void NDECL(stat_update_time);
+#ifdef STATUS_HILITES
+static unsigned long NDECL(query_conditions);
+static boolean FDECL(status_hilite_remove, (int));
+static boolean FDECL(status_hilite_menu_fld, (int));
+static void NDECL(status_hilites_viewall);
+#endif
 
 static char *
 get_strength_str()
@@ -264,18 +270,37 @@ int
 xlev_to_rank(xlev)
 int xlev;
 {
+    /*
+     *   1..2  => 0
+     *   3..5  => 1
+     *   6..9  => 2
+     *  10..13 => 3
+     *      ...
+     *  26..29 => 7
+     *    30   => 8
+     * Conversion is precise but only partially reversible.
+     */
     return (xlev <= 2) ? 0 : (xlev <= 30) ? ((xlev + 2) / 4) : 8;
 }
 
-#if 0 /* not currently needed */
 /* convert rank index (0..8) to experience level (1..30) */
 int
 rank_to_xlev(rank)
 int rank;
 {
-    return (rank <= 0) ? 1 : (rank <= 8) ? ((rank * 4) - 2) : 30;
+    /*
+     *  0 =>  1..2
+     *  1 =>  3..5
+     *  2 =>  6..9
+     *  3 => 10..13
+     *      ...
+     *  7 => 26..29
+     *  8 =>   30
+     * We return the low end of each range.
+     */
+    return (rank < 1) ? 1 : (rank < 2) ? 3
+           : (rank < 8) ? ((rank * 4) - 2) : 30;
 }
-#endif
 
 const char *
 rank_of(lev, monnum, female)
@@ -323,7 +348,8 @@ int *rank_indx, *title_length;
     register int i, j;
 
     /* Loop through each of the roles */
-    for (i = 0; roles[i].name.m; i++)
+    for (i = 0; roles[i].name.m; i++) {
+        /* loop through each of the rank titles for role #i */
         for (j = 0; j < 9; j++) {
             if (roles[i].rank[j].m
                 && !strncmpi(str, roles[i].rank[j].m,
@@ -345,6 +371,9 @@ int *rank_indx, *title_length;
                                                       : roles[i].malenum;
             }
         }
+    }
+    if (title_length)
+        *title_length = 0;
     return NON_PM;
 }
 
@@ -618,8 +647,6 @@ int cond_idx[CONDITION_COUNT] = { 0 };
 static boolean cache_avail[3] = { FALSE, FALSE, FALSE };
 static boolean cache_reslt[3] = { FALSE, FALSE, FALSE };
 static const char *cache_nomovemsg = NULL, *cache_multi_reason = NULL;
-static d_level cache_uz = { 0 };
-static boolean cache_underwater = FALSE;
 
 #define cond_cache_prepA()                                  \
 do {                                                        \
@@ -648,18 +675,6 @@ do {                                                        \
     if (clear_cache || refresh_cache) {                     \
         cache_reslt[0] = cache_avail[0] = FALSE;            \
         cache_reslt[1] = cache_avail[1] = FALSE;            \
-    }                                                       \
-} while (0)
-
-#define cond_cache_prepB()                                  \
-do {                                                        \
-    if (((cache_uz.dnum != u.uz.dnum)                       \
-        || (cache_uz.dlevel != u.uz.dlevel))                \
-        || (cache_underwater != Underwater))  {             \
-        cache_uz.dnum = 0;                                  \
-        cache_uz.dlevel = 0;                                \
-        cache_underwater = 0;                               \
-        cache_reslt[2] = cache_avail[2] = FALSE;            \
     }                                                       \
 } while (0)
 
@@ -830,8 +845,7 @@ bot_via_windowport()
        for that cache lifetime. There is caching of that nature done for
        unconsc (1) and parlyz (2)  because the suggested way of being able
        to distinguish unconsc, parlyz, sleeping, and busy involves multiple
-       string comparisons. There is also caching done for submerged (3) to
-       avoid repeatedly calling the on_level() function unnecessarily. */
+       string comparisons. */
 
 #define test_if_enabled(c) if (condtests[(c)].enabled) condtests[(c)].test
 
@@ -882,9 +896,10 @@ bot_via_windowport()
     condtests[bl_stone].test     = (Stoned) ? TRUE : FALSE;
     condtests[bl_strngl].test    = (Strangled) ? TRUE : FALSE;
     condtests[bl_stun].test      = (Stunned) ? TRUE : FALSE;
+    condtests[bl_submerged].test = (Underwater) ? TRUE : FALSE;
     test_if_enabled(bl_elf_iron) = (FALSE);
     test_if_enabled(bl_bareh)    = (!uarmg && !uwep);
-    test_if_enabled(bl_icy)      = levl[u.ux][u.uy].typ == ICE;
+    test_if_enabled(bl_icy)      = (levl[u.ux][u.uy].typ == ICE);
     test_if_enabled(bl_slippery) = (Glib) ? TRUE : FALSE;
     test_if_enabled(bl_woundedl) = (Wounded_legs);
 
@@ -913,25 +928,6 @@ bot_via_windowport()
     } else {
         condtests[bl_unconsc].test = condtests[bl_parlyz].test =
             condtests[bl_sleeping].test = condtests[bl_busy].test = FALSE;
-    }
-
-    /* submerged */
-    if (condtests[bl_submerged].enabled) {
-        cond_cache_prepB();
-        if (!cache_avail[2] && cache_underwater == 0
-            && (cache_uz.dlevel == 0 && cache_uz.dnum == 0)) {
-            cache_uz = u.uz;
-            cache_underwater = (Underwater) ? TRUE : FALSE;
-            cache_reslt[2] = (Underwater && !Is_waterlevel(&u.uz));
-            cache_avail[2] = TRUE;
-        }
-        if (cache_avail[2]) {
-            condtests[bl_submerged].test = cache_reslt[2];
-        } else {
-            condtests[bl_submerged].test = FALSE;
-        }
-    } else {
-        condtests[bl_submerged].test = FALSE;
     }
 
 #define cond_bitset(c) \
@@ -2677,7 +2673,7 @@ boolean from_configfile;
 
 #ifdef STATUS_HILITES
 
-unsigned long
+static unsigned long
 query_conditions()
 {
     int i,res;
@@ -3851,7 +3847,7 @@ choose_color:
     return TRUE;
 }
 
-boolean
+static boolean
 status_hilite_remove(id)
 int id;
 {
@@ -3901,7 +3897,7 @@ int id;
     return FALSE;
 }
 
-boolean
+static boolean
 status_hilite_menu_fld(fld)
 int fld;
 {
@@ -4023,7 +4019,7 @@ shlmenu_free:
     return acted;
 }
 
-void
+static void
 status_hilites_viewall()
 {
     winid datawin;

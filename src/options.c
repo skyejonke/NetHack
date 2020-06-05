@@ -1,4 +1,4 @@
-/* NetHack 3.7	options.c	$NHDT-Date: 1584350350 2020/03/16 09:19:10 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.459 $ */
+/* NetHack 3.7	options.c	$NHDT-Date: 1590263453 2020/05/23 19:50:53 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.465 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2008. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -286,7 +286,7 @@ static void FDECL(wc_set_font_name, (int, char *));
 static int FDECL(wc_set_window_colors, (char *));
 static boolean FDECL(illegal_menu_cmd_key, (CHAR_P));
 #ifndef CHANGE_COLOR
-int FDECL(optfn_palette, (int, BOOLEAN_P, BOOLEAN_P, char *, char *));
+int FDECL(optfn_palette, (int, int, BOOLEAN_P, char *, char *));
 #endif
 #ifdef CURSES_GRAPHICS
 extern int curses_read_attrs(const char *attrs);
@@ -668,40 +668,6 @@ char *op UNUSED;
                 iflags.altkeyhandler[0] ? iflags.altkeyhandler : "default");
 #endif
         return optn_ok;
-    }
-    return optn_ok;
-}
-
-int
-optfn_altmeta(optidx, req, negated, opts, op)
-int optidx UNUSED;
-int req;
-boolean negated UNUSED;
-char *opts;
-char *op UNUSED;
-{
-    if (req == do_init) {
-        return optn_ok;
-    }
-    if (req == do_set) {
-        /* Amiga altmeta causes Alt+key to be converted into Meta+key by
-           low level nethack code; on by default, can be toggled off if
-           Alt+key is needed for some ASCII chars on non-ASCII keyboard */
-
-        /* non-Amiga altmeta causes nethack's top level command loop to treat
-           two character sequence "ESC c" as M-c, for terminals or emulators
-           which send "ESC c" when Alt+c is pressed; off by default, enabling
-           this can potentially make trouble if user types ESC when nethack
-           is honoring this conversion request (primarily after starting a
-           count prefix prior to a command and then deciding to cancel it) */
-
-        return optn_ok;
-    }
-    if (req == get_val) {
-        if (!opts)
-            return optn_err;
-        opts[0] = '\0';
-        return optn_err;
     }
     return optn_ok;
 }
@@ -1467,23 +1433,15 @@ char *op UNUSED;
     return optn_ok;
 }
 
+#if defined(BACKWARD_COMPAT) && defined(MAC_GRAPHICS_ENV)
 int
 optfn_MACgraphics(optidx, req, negated, opts, op)
-#if defined(MAC_GRAPHICS_ENV) && defined(BACKWARD_COMPAT)
 int optidx;
 int req;
 boolean negated;
 char *opts;
 char *op;
-#else
-int optidx UNUSED;
-int req;
-boolean negated UNUSED;
-char *opts UNUSED;
-char *op UNUSED;
-#endif
 {
-#if defined(MAC_GRAPHICS_ENV) && defined(BACKWARD_COMPAT)
     boolean badflag = FALSE;
 
     if (req == do_init) {
@@ -1518,20 +1476,9 @@ char *op UNUSED;
         opts[0] = '\0';
         return optn_ok;
     }
-#else
-    if (req == do_set) {
-        config_error_add("'%s' %s; use 'symset:%s' instead",
-                         allopt[optidx].name,
-#ifdef MAC_GRAPHICS_ENV /* implies BACKWARD_COMPAT is not defined */
-                         "no longer supported",
-#else
-                         "is not supported",
-#endif
-                         allopt[optidx].name);
-    }
-#endif
     return optn_ok;
 }
+#endif /* BACKWARD_COMPAT && MAC_GRAPHICS_ENV */
 
 int
 optfn_map_mode(optidx, req, negated, opts, op)
@@ -1946,36 +1893,6 @@ char *op UNUSED;
         if (!opts)
             return optn_err;
         Sprintf(opts, "%s", to_be_done);
-        return optn_ok;
-    }
-    return optn_ok;
-}
-
-int
-optfn_menucolor(optidx, req, negated, opts, op)
-int optidx;
-int req;
-boolean negated UNUSED;
-char *opts;
-char *op;
-{
-    if (req == do_init) {
-        return optn_ok;
-    }
-    if (req == do_set) {
-        /* menucolor:"regex_string"=color */
-        if ((op = string_for_env_opt(allopt[optidx].name, opts, FALSE))
-            != empty_optstr) {
-            if (!add_menu_coloring(op))
-                return optn_err;
-        } else
-            return optn_err;
-        return optn_ok;
-    }
-    if (req == get_val) {
-        if (!opts)
-            return optn_err;
-        opts[0] = '\0';
         return optn_ok;
     }
     return optn_ok;
@@ -2531,7 +2448,8 @@ char *op;
     return optn_ok;
 }
 
-int optfn_paranoid_confirmation(optidx, req, negated, opts, op)
+int
+optfn_paranoid_confirmation(optidx, req, negated, opts, op)
 int optidx;
 int req;
 boolean negated;
@@ -3467,6 +3385,7 @@ char *op;
     return optn_ok;
 }
 
+#ifdef WIN32
 int
 optfn_subkeyvalue(optidx, req, negated, opts, op)
 int optidx UNUSED;
@@ -3479,12 +3398,10 @@ char *op UNUSED;
         return optn_ok;
     }
     if (req == do_set) {
-#if defined(WIN32)
         if (op == empty_optstr)
             return optn_err;
 #ifdef TTY_GRAPHICS
         map_subkeyvalue(op);
-#endif
 #endif
         return optn_ok;
     }
@@ -3496,6 +3413,7 @@ char *op UNUSED;
     }
     return optn_ok;
 }
+#endif /* WIN32 */
 
 int
 optfn_suppress_alert(optidx, req, negated, opts, op)
@@ -5529,7 +5447,7 @@ handler_menu_colors(VOID_ARGS)
         if (*mcbuf == '\033')
             goto menucolors_done;
         if (*mcbuf
-            && test_regex_pattern(mcbuf, (const char *)0)
+            && test_regex_pattern(mcbuf, "MENUCOLORS regex")
             && (mcclr = query_color((char *) 0)) != -1
             && (mcattr = query_attr((char *) 0)) != -1
             && !add_menu_coloring_parsed(mcbuf, mcclr, mcattr)) {
@@ -5611,7 +5529,7 @@ handler_msgtype(VOID_ARGS)
         if (*mtbuf == '\033')
             return TRUE;
         if (*mtbuf
-            && test_regex_pattern(mtbuf, (const char *)0)
+            && test_regex_pattern(mtbuf, "MSGTYPE regex")
             && (mttyp = query_msgtype()) != -1
             && !msgtype_add(mttyp, mtbuf)) {
             pline("Error adding the message type.");
@@ -6753,16 +6671,20 @@ msgtype_add(typ, pattern)
 int typ;
 char *pattern;
 {
+    static const char *re_error = "MSGTYPE regex error";
     struct plinemsg_type *tmp = (struct plinemsg_type *) alloc(sizeof *tmp);
 
     tmp->msgtype = typ;
     tmp->regex = regex_init();
+    /* test_regex_pattern() has already validated this regexp but parsing
+       it again could conceivably run out of memory */
     if (!regex_compile(pattern, tmp->regex)) {
-        static const char *re_error = "MSGTYPE regex error";
+        const char *re_error_desc = regex_error_desc(tmp->regex);
 
-        config_error_add("%s: %s", re_error, regex_error_desc(tmp->regex));
+        /* free first in case reason for failure was insufficient memory */
         regex_free(tmp->regex);
         free((genericptr_t) tmp);
+        config_error_add("%s: %s", re_error, re_error_desc);
         return FALSE;
     }
     tmp->pattern = dupstr(pattern);
@@ -6887,30 +6809,40 @@ char *str;
     return FALSE;
 }
 
+/* parse 'str' as a regular expression to check whether it's valid;
+   compiled regexp gets thrown away regardless of the outcome */
 static boolean
 test_regex_pattern(str, errmsg)
 const char *str;
 const char *errmsg;
 {
-    static const char re_error[] = "Regex error";
+    static const char def_errmsg[] = "NHregex error";
     struct nhregex *match;
-    boolean retval = TRUE;
+    const char *re_error_desc;
+    boolean retval;
 
     if (!str)
         return FALSE;
+    if (!errmsg)
+        errmsg = def_errmsg;
 
     match = regex_init();
     if (!match) {
-        config_error_add("NHregex error");
+        config_error_add("%s", errmsg);
         return FALSE;
     }
 
-    if (!regex_compile(str, match)) {
-        config_error_add("%s: %s", errmsg ? errmsg : re_error,
-                         regex_error_desc(match));
-        retval = FALSE;
-    }
+    retval = regex_compile(str, match);
+    /* get potential error message before freeing regexp and free regexp
+       before issuing message in case the error is "ran out of memory"
+       since message delivery might need to allocate some memory */
+    re_error_desc = !retval ? regex_error_desc(match) : 0;
+    /* discard regexp; caller will re-parse it after validating other stuff */
     regex_free(match);
+    /* if returning failure, tell player */
+    if (!retval)
+        config_error_add("%s: %s", errmsg, re_error_desc);
+
     return retval;
 }
 
@@ -6926,19 +6858,23 @@ int c, a;
         return FALSE;
     tmp = (struct menucoloring *) alloc(sizeof *tmp);
     tmp->match = regex_init();
+    /* test_regex_pattern() has already validated this regexp but parsing
+       it again could conceivably run out of memory */
     if (!regex_compile(str, tmp->match)) {
-        config_error_add("%s: %s", re_error, regex_error_desc(tmp->match));
+        const char *re_error_desc = regex_error_desc(tmp->match);
+
+        /* free first in case reason for regcomp failure was out-of-memory */
         regex_free(tmp->match);
-        free(tmp);
+        free((genericptr_t) tmp);
+        config_error_add("%s: %s", re_error, re_error_desc);
         return FALSE;
-    } else {
-        tmp->next = g.menu_colorings;
-        tmp->origstr = dupstr(str);
-        tmp->color = c;
-        tmp->attr = a;
-        g.menu_colorings = tmp;
-        return TRUE;
     }
+    tmp->next = g.menu_colorings;
+    tmp->origstr = dupstr(str);
+    tmp->color = c;
+    tmp->attr = a;
+    g.menu_colorings = tmp;
+    return TRUE;
 }
 
 /* parse '"regex_string"=color&attr' and add it to menucoloring */
@@ -7017,6 +6953,7 @@ free_menu_coloring()
         free((genericptr_t) tmp->origstr);
         free((genericptr_t) tmp);
     }
+    g.menu_colorings = (struct menucoloring *) 0;
 }
 
 static void
@@ -7834,13 +7771,14 @@ const char *mapping;
     ape = (struct autopickup_exception *) alloc(sizeof *ape);
     ape->regex = regex_init();
     if (!regex_compile(text, ape->regex)) {
-        config_error_add("%s: %s", APE_regex_error,
-                         regex_error_desc(ape->regex));
+        const char *re_error_desc = regex_error_desc(ape->regex);
+
+        /* free first in case reason for failure was insufficient memory */
         regex_free(ape->regex);
         free((genericptr_t) ape);
+        config_error_add("%s: %s", APE_regex_error, re_error_desc);
         return 0;
     }
-
     ape->pattern = dupstr(text);
     ape->grab = grab;
     ape->next = g.apelist;
@@ -7878,10 +7816,10 @@ free_autopickup_exceptions()
     struct autopickup_exception *ape;
 
     while ((ape = g.apelist) != 0) {
-      regex_free(ape->regex);
-      free((genericptr_t) ape->pattern);
-      g.apelist = ape->next;
-      free((genericptr_t) ape);
+        free((genericptr_t) ape->pattern);
+        regex_free(ape->regex);
+        g.apelist = ape->next;
+        free((genericptr_t) ape);
     }
 }
 
@@ -8602,7 +8540,7 @@ set_playmode()
 {
     if (wizard) {
         if (authorize_wizard_mode())
-            Strcpy(g.plname, "wizard");
+            g.plnamelen = (int) strlen(strcpy(g.plname, "wizard"));
         else
             wizard = FALSE; /* not allowed or not available */
         /* force explore mode if we didn't make it into wizard mode */
